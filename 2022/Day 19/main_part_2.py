@@ -1,69 +1,77 @@
-import random, math, threading, time
-F = open(f"python/Advent of Code/2022/Day 19/input.txt", "r")
-total_score = 1
-init_time = time.time()
+import math
+import multiprocessing
+import time
+
 
 class State:
-    def __init__(self, bots_built=[1, 0, 0, 0], resources=[0, 0, 0, 0], actions=["do_nothing"], blueprint={}):
+    def __init__(self, bots_built=[1, 0, 0, 0], resources=[0, 0, 0, 0], time=32, blueprint=[], cheap=None):
         self.bots_built = bots_built
         self.resources = resources
-        self.time = 33 - len(actions)
-        self.actions = actions
+        self.time = time
         self.blueprint = blueprint
-    
+        self.cheap = cheap
+
+    def __hash__(self):
+        return hash(tuple(self.bots_built, self.resources))
+
     def get_actions(self):
-        ret = []
-        for bot in range(4):
-            time = self.get_build_time(bot)
-            if time + 1 > self.time:
-                continue
-            ret.append(f"build_{bot}")
-        
-        if ret == []:
-            return ["do_nothing"]
-        
-        return ret
-    
+        ret = [bot for bot in range(4) if self.bots_built[bot] < self.cheap[bot] and (
+            self.get_build_time(bot) + 1) <= self.time]
+
+        try:
+            m_ret = max(ret) - 2
+            ret = [i for i in ret if i >= m_ret]
+            return ret
+        except:
+            return [-1]
+
     def get_build_time(self, n):
-        data = [math.ceil((cost - curr) / max(0.01, gain)) for cost, curr, gain in zip(self.blueprint[n], self.resources, self.bots_built) if cost != 0]
-        return max(0, int(max(data)))
-    
-    def get_score_rate(self):
-        return self.bots_built[3]
+        try:
+            data = [math.ceil((cost - curr) / gain)
+                    for cost, curr, gain
+                    in zip(self.blueprint[n], self.resources, self.bots_built)
+                    if cost != 0]
+            data.append(0)
+            return max(data)
+        except:
+            return 100
 
     def do_action(self, action):
-        time_steps = 1
-        if action.startswith("build_"):
-            time_steps = self.get_build_time(int(action[6:])) + 1
+        if action + 1:
+            time_steps = self.get_build_time(action) + 1
+        else:
+            time_steps = 1 + self.time
 
-        self.actions.extend([action for _ in range(time_steps)])
-        self.time = 33 - len(self.actions)
+        self.time -= time_steps
 
         # gain resources
-        self.resources = list(map(lambda x, y: x + y * time_steps, self.resources, self.bots_built))
-        
-        if action == "do_nothing":
+        if not (action + 1):
+            self.resources[3] += self.bots_built[3] * time_steps
             return self
-        
-        to_build = int(action[6:])
-        self.resources = list(map(lambda x, y: x - y, self.resources, self.blueprint[to_build]))
-        self.bots_built[to_build] += 1
-        
+
+        for resource in range(4):
+            self.resources[resource] += self.bots_built[resource] * \
+                time_steps - self.blueprint[action][resource]
+
+        self.bots_built[action] += 1
+
         return self
-    
-    def maximum_possible_score(self):
-        return self.resources[3] + self.get_score_rate() * self.time + (self.time - 1) * self.time // 2
-    
+
+    def extra_possible_score(self):
+        return (self.time - 1) * self.time >> 1
+
     def minimum_possible_score(self):
-        return self.resources[3] + self.get_score_rate() * self.time
-    
+        return self.resources[3] + self.bots_built[3] * self.time
+
     def copy(self):
-        return State(self.bots_built.copy(), self.resources.copy(), self.actions.copy(), self.blueprint.copy())
+        return State(self.bots_built.copy(), self.resources.copy(), self.time, self.blueprint, self.cheap)
+
 
 def parse_inp(F: list[str]):
     ret = []
     for blueprint in F:
-        p = [int(l) for l in "".join(c for c in blueprint if c.isnumeric() or c == " ").split(" ") if l != ""]
+        p = [int(l) for l in "".join(
+            c for c in blueprint if c.isnumeric() or c == " ").split(" ") if l != ""]
         ret.append([
             [p[1], 0, 0, 0],
             [p[2], 0, 0, 0],
@@ -72,68 +80,45 @@ def parse_inp(F: list[str]):
         ])
     return ret[:3]
 
-def deal_with_blueprint(blueprint, index):
-    global total_score
-    states = [State(blueprint=blueprint)]
-    best_state = State(blueprint=blueprint)
-    i = 0
-    while True:
-        i += 1
-        if states == []:
-            break
-        working = states.pop(0).copy()
-        paths = working.get_actions()
 
-        for action in paths:
+def deal_with_blueprint(blueprint):
+    global total_score
+    cheap = [max(blueprint[1][0], blueprint[2][0], blueprint[3][0]),
+             max(blueprint[2][1], blueprint[3][1]),
+             blueprint[3][2],
+             1000000]
+    states = [State(blueprint=blueprint, cheap=cheap)]
+    best_min = 0
+
+    while states:
+        working = states.pop()
+
+        for action in working.get_actions():
             new = working.copy().do_action(action)
+
             if new.time < 0:
                 break
 
-            if best_state.minimum_possible_score() <= new.minimum_possible_score():
-                best_state = new
-            
-            if best_state.minimum_possible_score() <= new.maximum_possible_score():
-                states.insert(0, new)
+            mscore = new.minimum_possible_score()
+            best_min = max(best_min, mscore)
 
-#        if i % 100000 == 0:
-#            print(f"Round {i}, {len(states)} more leaf nodes")
-#            print(f"Next: {states[0].actions}")
-#            print(f"bots: {states[0].bots_built}")
-#            print(f"resources: {states[0].resources}")
-#            print(f"bp: {states[0].blueprint}")
-#            print(f"Time: {states[0].time}")
-#            print(f"min score: {states[0].minimum_possible_score()}")
-#            print(f"max score: {states[0].maximum_possible_score()}")
-#            print(f"Best: {best_state.resources[3]}")
-#            print("\n")
+            bscore = new.extra_possible_score()
+            if best_min - mscore <= bscore:
+                states.append(new)
 
-#    print(f"Best found:")
-#    print(f"Score: {best_state.maximum_possible_score()}")
-#    print("Actions")
-#    for i in best_state.actions:
-#        print(i)
-    print(f"BP {index + 1}: {best_state.minimum_possible_score()} geodes ({i} nodes searched, {time.time() - init_time}s used)")
-    total_score *= best_state.minimum_possible_score()
+#    print(f"BP: {best_min} geodes")
+    return best_min
 
-
-def randomise(blueprint):
-    s = State(blueprint=blueprint).copy()
-    while s.time > 0:
-        action = s.get_actions()[random.randint(0, len(s.get_actions()) - 1)]
-        if "build_3" in s.get_actions():
-            action = "build_3"
-        s.do_action(action)
-    return s.resources[3]
 
 def main(prints):
-    threads = []
-    for index, blueprint in enumerate(prints):
-        thread = threading.Thread(target=deal_with_blueprint, args=(blueprint, index))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
-    return total_score
+    ret = 1
+    with multiprocessing.Pool(len(prints)) as p:
+        for result in p.map(deal_with_blueprint, prints):
+            ret *= result
+    return ret
 
-#main_alt()
-print(main(parse_inp(F)))
+
+if __name__ == "__main__":
+    st = time.perf_counter_ns()
+    print(main(parse_inp(open(f"python/Advent of Code/2022/Day 19/input.txt", "r"))))
+    print(f"{time.perf_counter_ns() - st}ns used")
